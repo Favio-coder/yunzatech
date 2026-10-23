@@ -4,7 +4,7 @@ MVP multijugador con React, Vite, Tailwind CSS, Firebase Authentication (Google)
 
 ## Qué incluye
 
-- Acceso con Google y autorización de organizadores mediante Custom Claims.
+- Acceso con Google y autorización de organizadores mediante documentos `users/{uid}` con `isAdmin: true`.
 - Creación y edición de actividades propias, invitación por código/enlace e inscripciones.
 - Máquina de estados: `LOBBY → DECORATING → READY → PLAYING → FINISHED`. Se permite cancelar desde cualquier estado no terminal.
 - Árbol SVG adaptable a móvil, decoración compartida, selección y clic/toque, límites por participante y posiciones normalizadas. Interacción por teclado en el centro de la copa.
@@ -46,17 +46,7 @@ El reloj local invoca la misma lógica transaccional del servidor cada segundo. 
 
 ### Primer administrador local
 
-1. Entra con una cuenta Google de prueba desde la app.
-2. Copia su UID desde Auth en la UI de emuladores.
-3. En PowerShell:
-
-```powershell
-$env:FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099'
-$env:GCLOUD_PROJECT = 'demo-yunza-tech'
-npm --prefix functions run grant-admin -- UID_DE_PRUEBA
-```
-
-4. Cierra sesión y entra otra vez. Ahora `/admin` permite crear actividades.
+Inicia sesión con Google de prueba. La app crea automáticamente `users/{uid}` con nombre, correo e `isAdmin: false`. En Firestore de la UI de emuladores abre ese usuario y cambia `isAdmin` a booleano `true`. No tienes que crear la colección ni el documento. La interfaz detecta el cambio sin recargar.
 
 ## Conectar tu Firebase real
 
@@ -85,53 +75,54 @@ Tras el primer despliegue, revisa en Google Cloud la cola, el job y los permisos
 
 Si falla el encolado, el evento Firestore se reintenta y el job de recuperación recoge actividades vencidas. Ese respaldo puede retrasar el avance aproximadamente un minuto más el tiempo de ejecución/arranque. El servidor rechaza igualmente adornos o golpes después del plazo exacto. Los tiempos no dependen del reloj del navegador.
 
-### Primer administrador de producción
+### Usuarios automáticos y administradores desde Firebase Console
 
-El script Admin SDK necesita credenciales de aplicación predeterminadas (ADC), **independientes de `firebase login`**. Desde un equipo autorizado, usa `gcloud auth application-default login` o una identidad administrativa configurada fuera del frontend. No guardes claves de servicio dentro del repositorio.
+Al iniciar sesión con Google, la aplicación crea automáticamente `users/{uid}` con `displayName`, `email` e `isAdmin: false`. Firestore crea la colección `users` al guardar su primer documento. Las siguientes sesiones conservan el rol existente; los perfiles antiguos sin el campo reciben `isAdmin: false` sin perder sus datos.
 
-En una terminal de producción, elimina cualquier variable de emuladores si la habías definido:
+1. Inicia sesión con Google en la aplicación.
+2. Abre Firebase Console → Firestore Database → Datos → `users`.
+3. Abre tu documento (ID = UID de Authentication; puedes identificarlo por el correo del perfil).
+4. Cambia el campo `isAdmin` de tipo **booleano** a **true** para habilitar administración.
+5. Regresa a la app: aparece Mis actividades automáticamente.
 
-```powershell
-Remove-Item Env:FIREBASE_AUTH_EMULATOR_HOST -ErrorAction SilentlyContinue
-Remove-Item Env:FIRESTORE_EMULATOR_HOST -ErrorAction SilentlyContinue
-$env:GCLOUD_PROJECT = 'TU_PROJECT_ID'
-npm --prefix functions run grant-admin -- UID_REAL
-```
+Para revocar, cambia `isAdmin` a `false`. Un valor ausente o el texto `"true"` no concede permisos. Solo se escucha el documento de la cuenta actual. El cliente puede crear su propio perfil exclusivamente con `isAdmin: false`; no puede cambiar un rol existente, habilitarse, listar usuarios ni modificar perfiles ajenos.
 
-El UID se obtiene de Firebase Authentication después de que la persona inicie sesión. Cierra sesión y entra otra vez para renovar el token. El frontend y las reglas nunca pueden asignar roles.
+Antes de usar este flujo, despliega reglas, Functions y frontend actualizados con el comando anterior. Si aparece «Firebase denegó el acceso al perfil», comprueba que desplegaste `firestore.rules` al mismo proyecto que `VITE_FIREBASE_PROJECT_ID`. Una colección inexistente no es un error: se crea al guardar el primer perfil. Reintentar vuelve a intentar la creación y lectura del perfil.
+
+Las Functions comprueban `users/{uid}.isAdmin === true` en cada transacción administrativa, incluso en reintentos, y mantienen las restricciones de propiedad. Los documentos de la antigua colección `admins` y los Custom Claims ya no se utilizan; para migrar inicia sesión y cambia el booleano del perfil en `users`. No necesitas gcloud, ADC, claves privadas ni cuentas de servicio para gestionar el rol.
 
 ## Rutas
 
-| Ruta                     | Uso                                                           |
-| ------------------------ | ------------------------------------------------------------- |
-| `/`                      | Inicio e ilustración del árbol                                |
-| `/join?code=CODIGO`      | Acceso con Google e ingreso por código                        |
-| `/admin`                 | Actividades propias y creación; requiere claim admin          |
-| `/admin/activities/:id`  | Gestión, configuración, lista e historial; requiere propiedad |
-| `/activities/:id`        | Participación persistente y fases                             |
-| `/activities/:id/winner` | Resultado compartido                                          |
-| `/display/:id`           | Pantalla pública sin sesión, solo lectura                     |
+| Ruta                     | Uso                                                                 |
+| ------------------------ | ------------------------------------------------------------------- |
+| `/`                      | Inicio e ilustración del árbol                                      |
+| `/join?code=CODIGO`      | Acceso con Google e ingreso por código                              |
+| `/admin`                 | Actividades propias y creación; requiere documento admin habilitado |
+| `/admin/activities/:id`  | Gestión, configuración, lista e historial; requiere propiedad       |
+| `/activities/:id`        | Participación persistente y fases                                   |
+| `/activities/:id/winner` | Resultado compartido                                                |
+| `/display/:id`           | Pantalla pública sin sesión, solo lectura                           |
 
 El administrador puede participar abriendo la ruta de participante y uniéndose como cualquier otra cuenta.
 
 ## Esquema y autoridad
 
-| Colección                                           | Contenido y acceso                                                                                      |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `users/{uid}`                                       | Perfil privado y correo; lectura propia, escrituras solo de servidor                                    |
-| `users/{uid}/requests/{requestId}`                  | Recibos idempotentes vinculados al contenido y usuario; privados                                        |
-| `activities/{id}`                                   | Configuración, propietario, código, lista congelada, orden y estado; lectura solo del admin propietario |
-| `activities/{id}/participants/{uid}`                | Participación única y contador de adornos; privada                                                      |
-| `activities/{id}/turns/{n}`                         | Turnos golpeados u omitidos; privados                                                                   |
-| `activities/{id}/hits/{n}`                          | Daño y resistencia por golpe; privados                                                                  |
-| `joinCodes/{code}`                                  | Resolución de códigos exclusivamente mediante callable                                                  |
-| `publicActivities/{id}`                             | Proyección explícita con fase, tiempos, resistencia y ganador; lectura por ID, listado global denegado  |
-| `publicActivities/{id}/participants/{uid}`          | Nombre, UID y foto públicos; sin correo                                                                 |
-| `publicActivities/{id}/decorations/{uid_requestId}` | Tipo, propietario y posición normalizada                                                                |
-| `publicActivities/{id}/hits/{n}`                    | Historial público de golpes                                                                             |
-| `publicActivities/{id}/turns/{n}`                   | Historial público de turnos y omisiones                                                                 |
+| Colección                                           | Contenido y acceso                                                                                         |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `users/{uid}`                                       | Perfil y rol; creación propia automática con isAdmin false, lectura propia, cambios de rol solo en Console |
+| `users/{uid}/requests/{requestId}`                  | Recibos idempotentes vinculados al contenido y usuario; privados                                           |
+| `activities/{id}`                                   | Configuración, propietario, código, lista congelada, orden y estado; lectura solo del admin propietario    |
+| `activities/{id}/participants/{uid}`                | Participación única y contador de adornos; privada                                                         |
+| `activities/{id}/turns/{n}`                         | Turnos golpeados u omitidos; privados                                                                      |
+| `activities/{id}/hits/{n}`                          | Daño y resistencia por golpe; privados                                                                     |
+| `joinCodes/{code}`                                  | Resolución de códigos exclusivamente mediante callable                                                     |
+| `publicActivities/{id}`                             | Proyección explícita con fase, tiempos, resistencia y ganador; lectura por ID, listado global denegado     |
+| `publicActivities/{id}/participants/{uid}`          | Nombre, UID y foto públicos; sin correo                                                                    |
+| `publicActivities/{id}/decorations/{uid_requestId}` | Tipo, propietario y posición normalizada                                                                   |
+| `publicActivities/{id}/hits/{n}`                    | Historial público de golpes                                                                                |
+| `publicActivities/{id}/turns/{n}`                   | Historial público de turnos y omisiones                                                                    |
 
-Todos los cambios pasan por `operate`, una callable autenticada. Las reglas **deniegan todas las escrituras de clientes**, incluidas decoraciones: la Function valida propietario, participación, fase, plazo, geometría y límite dentro de una transacción. La proyección pública se escribe en la misma transacción, por lo que resistencia y ganador son consistentes con los datos privados.
+Los cambios del juego pasan por `operate`, una callable autenticada. Las reglas **deniegan las escrituras de clientes sobre actividades y decoraciones**; solo permiten crear el perfil propio con rol false o inicializar ese campo si falta: la Function valida propietario, participación, fase, plazo, geometría y límite dentro de una transacción. La proyección pública se escribe en la misma transacción, por lo que resistencia y ganador son consistentes con los datos privados.
 
 Los campos `*At` y `*EndsAt` se almacenan como milisegundos UTC producidos en servidor con `Timestamp.now().toMillis()`. No se acepta ningún timestamp del cliente. El frontend sincroniza su reloj con una callable de servidor; su cuenta regresiva es informativa. Daño, sorteo, vencimientos y transición tienen autoridad exclusivamente en servidor.
 
@@ -184,6 +175,10 @@ GitHub Pages solo publica el frontend: las reglas, índices y Functions se despl
 
 ## Resultado de las comprobaciones de esta entrega
 
-Pasaron ESLint, el formato Prettier, las 8 pruebas de dominio, la compilación de producción y el flujo de integración en Emulator Suite (11 casos más el test contenedor). Se revisó la portada a tamaño de escritorio y a 390 px, y la compilación final mostró el acceso Google en la ruta protegida `/join`.
+Pasaron ESLint, Prettier, las 10 pruebas unitarias (8 de dominio y 2 de scripts obsoletos), el build de producción y las 14 pruebas de Emulator Suite (13 casos y el contenedor). Se verificaron valores estrictos del rol, creación automática y migración de perfiles, conservación del rol al volver a entrar, aislamiento de usuarios, revocación con onSnapshot y bloqueo de operaciones nuevas y reintentos, propiedad y flujo multijugador completo. No se realizó una prueba visual de navegador en esta entrega. Los emuladores usaron Node 26 del equipo; el despliegue conserva Node 22.
 
 Se corrigieron las alertas altas de gRPC con una resolución compatible a `1.14.6` o superior, dentro de la versión mayor 1. `npm audit` todavía informa 5 alertas moderadas transitivas de las herramientas de Firebase CLI (OpenTelemetry/gaxios/uuid); quedan pendientes de actualización compatible del proveedor. No se aplicaron degradaciones ni actualizaciones mayores forzadas de esas herramientas. La auditoría de las dependencias de `functions/` informó 0 vulnerabilidades al instalar las versiones actuales.
+
+### Scripts anteriores
+
+`make-admin` y `grant-admin` quedan como avisos de migración y no modifican usuarios ni permisos. Usa el procedimiento de Firebase Console anterior.

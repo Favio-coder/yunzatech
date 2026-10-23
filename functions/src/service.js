@@ -95,6 +95,35 @@ export async function executeOperation(auth, input) {
   // Bind an idempotency key to its payload. Reusing it for a different action fails.
   const fingerprint = createHash('sha256').update(JSON.stringify(input)).digest('hex')
   return db.runTransaction(async (tx) => {
+    const ownerActions = [
+      'updateConfig',
+      'registration',
+      'decorateStart',
+      'playStart',
+      'cancel',
+      'skip',
+    ]
+    if (action === 'create' || ownerActions.includes(action)) {
+      const admin = await tx.get(db.doc(`users/${auth.uid}`))
+      requireThat(
+        admin.data()?.isAdmin === true,
+        'Se requiere el rol administrador.',
+        'permission-denied',
+      )
+      if (ownerActions.includes(action)) {
+        requireThat(
+          typeof input.activityId === 'string' && idPattern.test(input.activityId),
+          'Actividad inválida.',
+          'invalid-argument',
+        )
+        const activity = await tx.get(db.doc(`activities/${input.activityId}`))
+        requireThat(
+          activity.data()?.ownerUid === auth.uid,
+          'No puedes gestionar esta actividad.',
+          'permission-denied',
+        )
+      }
+    }
     const receipt = await tx.get(receiptRef)
     if (receipt.exists) {
       requireThat(
@@ -110,11 +139,6 @@ export async function executeOperation(auth, input) {
       return result
     }
     if (action === 'create') {
-      requireThat(
-        auth.token.admin === true,
-        'Se requiere el rol administrador.',
-        'permission-denied',
-      )
       const config = validateConfig(input.config || {})
       const codeRef = db.doc(`joinCodes/${generatedCode}`)
       requireThat(
@@ -165,20 +189,6 @@ export async function executeOperation(auth, input) {
     const a = snapshot.data()
     const participantRef = ref.collection('participants').doc(auth.uid)
     const participant = await tx.get(participantRef)
-    const ownerActions = [
-      'updateConfig',
-      'registration',
-      'decorateStart',
-      'playStart',
-      'cancel',
-      'skip',
-    ]
-    if (ownerActions.includes(action))
-      requireThat(
-        auth.token.admin === true && a.ownerUid === auth.uid,
-        'No puedes gestionar esta actividad.',
-        'permission-denied',
-      )
     if (action === 'join' || action === 'joinCode') {
       if (participant.exists) return done({ activityId })
       requireThat(

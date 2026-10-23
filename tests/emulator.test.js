@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { ensureUserProfile } from '../src/services/userProfile.js'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -8,7 +9,18 @@ import {
   assertFails,
   assertSucceeds,
 } from '@firebase/rules-unit-testing'
-import { doc, getDoc, setDoc, getDocs, collection, query, where } from 'firebase/firestore'
+import {
+  doc,
+  getDoc,
+  setDoc,
+  getDocs,
+  collection,
+  query,
+  where,
+  deleteDoc,
+  updateDoc,
+  onSnapshot,
+} from 'firebase/firestore'
 const require = createRequire(new URL('../functions/package.json', import.meta.url))
 const { initializeApp } = require('firebase-admin/app')
 const { getFirestore } = require('firebase-admin/firestore')
@@ -42,7 +54,7 @@ async function person(name, isAdmin = false) {
   const account = await response.json()
   if (!account.localId) throw new Error(JSON.stringify(account))
   await adminAuth.updateUser(account.localId, { displayName: name })
-  if (isAdmin) await adminAuth.setCustomUserClaims(account.localId, { admin: true })
+  if (isAdmin) await db.doc(`users/${account.localId}`).set({ isAdmin: true })
   const signIn = await fetch(
     'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo-key',
     {
@@ -94,7 +106,7 @@ test('full multiplayer flow, transactions, authority and security rules', async 
   let id
   let clock
   try {
-    await t.test('authentication and protected admin claim', async () => {
+    await t.test('authentication and document-based admin role', async () => {
       await assert.rejects(call(null, { action: 'create', config }), { code: 'UNAUTHENTICATED' })
       await assert.rejects(call(first, { action: 'create', config }), { code: 'PERMISSION_DENIED' })
       id = (await call(owner, { action: 'create', config })).activityId
@@ -104,6 +116,113 @@ test('full multiplayer flow, transactions, authority and security rules', async 
       )
       await assert.rejects(call(owner, { action: 'decorateStart', activityId: id }))
       await assert.rejects(call(owner, { action: 'playStart', activityId: id }))
+    })
+    await t.test('automatic profiles, repeat login and legacy profile migration', async () => {
+      const client = rules.authenticatedContext(first.uid).firestore()
+      const user = { uid: first.uid, displayName: 'Ana', email: null }
+      await Promise.all([ensureUserProfile(client, user), ensureUserProfile(client, user)])
+      assert.deepEqual((await db.doc(`users/${first.uid}`).get()).data(), {
+        displayName: 'Ana',
+        email: null,
+        isAdmin: false,
+      })
+      await db.doc(`users/${first.uid}`).update({ isAdmin: true })
+      await ensureUserProfile(client, user)
+      assert.equal((await db.doc(`users/${first.uid}`).get()).data().isAdmin, true)
+      await assertFails(updateDoc(doc(client, `users/${first.uid}`), { isAdmin: false }))
+      await db
+        .doc(`users/${first.uid}`)
+        .set({ displayName: 'Perfil existente', decorationCount: 3 })
+      await ensureUserProfile(client, user)
+      assert.deepEqual((await db.doc(`users/${first.uid}`).get()).data(), {
+        displayName: 'Perfil existente',
+        decorationCount: 3,
+        isAdmin: false,
+      })
+      const anonymous = rules.unauthenticatedContext().firestore()
+      await assertFails(
+        setDoc(doc(anonymous, 'users/forged'), { displayName: 'X', email: null, isAdmin: false }),
+      )
+      await assertFails(
+        setDoc(doc(client, `users/${second.uid}`), {
+          displayName: 'X',
+          email: null,
+          isAdmin: false,
+        }),
+      )
+      await assertFails(
+        setDoc(doc(client, `users/${first.uid}`), {
+          displayName: 'X',
+          email: null,
+          isAdmin: false,
+          role: 'admin',
+        }),
+      )
+    })
+    await t.test('strict role values, rules isolation and live revocation', async () => {
+      const client = rules.authenticatedContext(first.uid, { admin: true }).firestore()
+      const own = rules.authenticatedContext(owner.uid).firestore()
+      const ref = db.doc(`users/${first.uid}`)
+      for (const value of [false, 'true', null]) {
+        await ref.set({ isAdmin: value })
+        await assert.rejects(
+          call(first, { action: 'create', config, uid: owner.uid, isAdmin: true, role: 'admin' }),
+          { code: 'PERMISSION_DENIED' },
+        )
+        await assertFails(getDoc(doc(client, `activities/${id}`)))
+      }
+      await ref.set({})
+      await assert.rejects(call(first, { action: 'create', config }), { code: 'PERMISSION_DENIED' })
+      await ref.delete()
+      await assertSucceeds(getDoc(doc(client, `users/${first.uid}`)))
+      await assertFails(
+        getDoc(doc(rules.unauthenticatedContext().firestore(), `users/${owner.uid}`)),
+      )
+      for (const reader of [client, own]) {
+        await assertFails(getDocs(collection(reader, 'users')))
+        await assertFails(setDoc(doc(reader, `users/${first.uid}`), { isAdmin: true }))
+        await assertFails(setDoc(doc(reader, `users/${owner.uid}`), { isAdmin: true }))
+        await assertFails(updateDoc(doc(reader, `users/${owner.uid}`), { isAdmin: false }))
+        await assertFails(deleteDoc(doc(reader, `users/${owner.uid}`)))
+      }
+      await assertFails(getDoc(doc(client, `users/${owner.uid}`)))
+      const observed = []
+      let listenerError
+      const stop = onSnapshot(
+        doc(own, `users/${owner.uid}`),
+        (snap) => observed.push(snap.data()?.isAdmin === true),
+        (error) => {
+          listenerError = error
+        },
+      )
+      try {
+        await until(() => observed.includes(true))
+        const request = {
+          action: 'registration',
+          activityId: id,
+          open: true,
+          requestId: crypto.randomUUID(),
+        }
+        await call(owner, request)
+        await db.doc(`users/${owner.uid}`).update({ isAdmin: false })
+        await until(() => observed.at(-1) === false)
+        assert.equal(listenerError, undefined)
+        await assertFails(getDoc(doc(own, `activities/${id}`)))
+        await assert.rejects(call(owner, request), { code: 'PERMISSION_DENIED' })
+        await assert.rejects(call(owner, { action: 'create', config }), {
+          code: 'PERMISSION_DENIED',
+        })
+        await assert.rejects(call(owner, { action: 'cancel', activityId: id }), {
+          code: 'PERMISSION_DENIED',
+        })
+        await db.doc(`users/${owner.uid}`).delete()
+        await assert.rejects(call(owner, { action: 'create', config }), {
+          code: 'PERMISSION_DENIED',
+        })
+      } finally {
+        stop()
+        await db.doc(`users/${owner.uid}`).set({ isAdmin: true })
+      }
     })
     await t.test('two unique participants join through code and link', async () => {
       const { code } = await snapshot(id)

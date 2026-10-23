@@ -13,7 +13,7 @@ const illustration = [
   ['money', 0.73, 0.54],
 ].map(([kind, x, y], i) => ({ kind, x, y, id: i }))
 export default function HomePage() {
-  const { user } = useAuth()
+  const { user, admin } = useAuth()
   return (
     <>
       <div className="page-heading">
@@ -53,10 +53,12 @@ export default function HomePage() {
             <Link className="button" to="/join">
               Unirme a una yunza <Icon name="arrow" />
             </Link>
-            <Link className="button button-outline" to="/admin">
-              <Icon name="plus" />
-              Crear actividad
-            </Link>
+            {admin && (
+              <Link className="button button-outline" to="/admin">
+                <Icon name="plus" />
+                Crear actividad
+              </Link>
+            )}
           </div>
           <div className="hero-note">
             <span className="mini-faces">✦</span>

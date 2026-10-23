@@ -52,14 +52,24 @@ function Guard({ children, admin = false }) {
         <LoginButton />
       </div>
     )
+  if (admin && session.roleLoading) return <div className="empty-state">Validando permisos…</div>
+  if (admin && session.roleError)
+    return (
+      <div className="empty-state">
+        <Notice error>No se pudieron validar tus permisos: {session.roleError}</Notice>
+        <button className="button" onClick={session.retryRole}>
+          Reintentar
+        </button>
+      </div>
+    )
   if (admin && !session.admin)
     return (
       <div className="empty-state">
         <Icon name="leaf" size={40} />
         <h2>Tu cuenta es de participante</h2>
         <p>
-          El rol administrador se asigna de forma segura con el script de Firebase. Revisa el README
-          del proyecto.
+          Tu perfil se crea automáticamente. El rol administrador se habilita con isAdmin en
+          Firebase Console. Revisa el README del proyecto.
         </p>
         <Link className="button" to="/join">
           Unirme a una yunza
@@ -69,7 +79,7 @@ function Guard({ children, admin = false }) {
   return children
 }
 export default function App() {
-  const { user, admin, error } = useAuth()
+  const { user, admin, error, roleError, retryRole } = useAuth()
   const { pathname } = useLocation()
   const [logoutError, setLogoutError] = useState('')
   const display = pathname.startsWith('/display/')
@@ -94,10 +104,12 @@ export default function App() {
               <Icon name="users" />
               Unirme a una yunza
             </NavLink>
-            <NavLink to="/admin">
-              <Icon name="grid" />
-              Mis actividades{admin && <span className="nav-admin">ADMIN</span>}
-            </NavLink>
+            {admin && (
+              <NavLink to="/admin">
+                <Icon name="grid" />
+                Mis actividades<span className="nav-admin">ADMIN</span>
+              </NavLink>
+            )}
           </nav>
           <div className="sidebar-bottom">
             <div className="tradition-card">
@@ -162,6 +174,14 @@ export default function App() {
         </header>
         <main className="page-content">
           <Notice error>{error || logoutError}</Notice>
+          {roleError && !pathname.startsWith('/admin') && (
+            <Notice error>
+              {roleError}{' '}
+              <button className="button" onClick={retryRole}>
+                Reintentar
+              </button>
+            </Notice>
+          )}
           {!configured && (
             <Notice>
               Firebase aún no está configurado. Copia .env.example a .env y completa los datos de tu

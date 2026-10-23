@@ -15,7 +15,8 @@
     "test:emulators": "node scripts/firebase.js emulators:exec --project demo-yunza-tech --only auth,firestore,functions \"npm run test:integration\"",
     "dev:emulators": "vite --mode emulator",
     "format": "prettier --write src functions/src functions/scripts functions/test scripts tests *.js *.json index.html README.md",
-    "format:check": "prettier --check src functions/src functions/scripts functions/test scripts tests *.js *.json index.html README.md"
+    "format:check": "prettier --check src functions/src functions/scripts functions/test scripts tests *.js *.json index.html README.md",
+    "make-admin": "node functions/scripts/make-admin.js"
   },
   "dependencies": {
     "firebase": "^13.1.0",
