@@ -27,6 +27,8 @@
     "lineWidth": 100
   },
   "deploy": {
+    "org": "jjramirezv",
+    "app": "yunzatech-api",
     "runtime": {
       "type": "dynamic",
       "entrypoint": "./main.ts"

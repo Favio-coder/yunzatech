@@ -16,7 +16,8 @@
     "test:integration": "node tests/run-integration.js",
     "test:emulators": "node scripts/firebase.js emulators:exec --project demo-yunza-tech --only auth,firestore \"node tests/run-integration.js\"",
     "format": "prettier --write src backend scripts tests *.js *.json index.html README.md",
-    "format:check": "prettier --check src backend scripts tests *.js *.json index.html README.md"
+    "format:check": "prettier --check src backend scripts tests *.js *.json index.html README.md",
+    "deploy:backend": "node scripts/deno.js deploy backend --prod"
   },
   "dependencies": {
     "firebase": "^13.1.0",
