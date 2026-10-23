@@ -36,7 +36,16 @@ jobs:
         run: npm ci
 
       - name: Compilar proyecto
+        env:
+          VITE_BASE_PATH: /yunzatech/
+          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
         run: npm run build
+
+      - name: Rutas SPA en GitHub Pages
+        run: cp dist/index.html dist/404.html
 
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v6

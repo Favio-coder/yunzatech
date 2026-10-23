@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function adminOwner() {
+      return signedIn() && request.auth.token.admin == true && resource.data.ownerUid == request.auth.uid;
+    }
+    // All mutations pass through transactional, validated callable functions.
+    match /activities/{activityId} {
+      allow read: if adminOwner();
+      allow write: if false;
+      match /{document=**} { allow read, write: if false; }
+    }
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, write: if false;
+      match /requests/{requestId} { allow read, write: if false; }
+    }
+    match /publicActivities/{activityId} {
+      allow get: if true;
+      allow list, write: if false;
+      match /{collection}/{id} {
+        allow read: if collection in ['participants', 'decorations', 'hits', 'turns'];
+        allow write: if false;
+      }
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

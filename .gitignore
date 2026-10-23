@@ -26,3 +26,17 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+.tools/
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+*-debug.log
+.emulator-data/
+functions/node_modules/
+
+
+node_modules/
+/node_modules/
+
