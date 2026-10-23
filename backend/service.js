@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { getFirestore, Timestamp } from 'firebase-admin/firestore'
+import { getDb, Timestamp } from './db.ts'
 import {
   DECORATIONS,
   GameError,
@@ -18,10 +18,21 @@ const safePhoto = (value) =>
   /^https:\/\/(lh3\.googleusercontent\.com|.*\.googleusercontent\.com)\//.test(value)
     ? value.slice(0, 2048)
     : null
-const idPattern = /^[a-zA-Z0-9_-]{8,128}$/
+export const idPattern = /^[a-zA-Z0-9_-]{8,128}$/
+// The only administrator authority: the boolean users/{uid}.isAdmin edited in Firebase Console.
+const ADMIN_ACTIONS = Object.freeze([
+  'create',
+  'updateConfig',
+  'registration',
+  'decorateStart',
+  'playStart',
+  'cancel',
+  'skip',
+])
+export const isAdminProfile = (profile) => profile.exists && profile.data().isAdmin === true
 function save(tx, ref, activity) {
   tx.set(ref, activity)
-  tx.set(getFirestore().doc(`publicActivities/${ref.id}`), publicActivity(activity))
+  tx.set(getDb().doc(`publicActivities/${ref.id}`), publicActivity(activity))
 }
 function setNext(activity, now) {
   Object.assign(activity, nextTurn(activity, now))
@@ -37,7 +48,7 @@ function recordSkip(tx, ref, activity, now, reason) {
     reason,
     createdAt: now,
   })
-  tx.set(getFirestore().doc(`publicActivities/${ref.id}/turns/${activity.turnNumber}`), {
+  tx.set(getDb().doc(`publicActivities/${ref.id}/turns/${activity.turnNumber}`), {
     displayName: activity.currentTurnDisplayName,
     turnNumber: activity.turnNumber,
     round: activity.round,
@@ -47,11 +58,36 @@ function recordSkip(tx, ref, activity, now, reason) {
   })
   setNext(activity, now)
 }
-export async function expireActivity(activityId) {
-  const db = getFirestore()
+/**
+ * Expires one activity using the server clock. With `requester`, the caller must be a
+ * participant or the admin owner; authorization and transition share one transaction.
+ * Early notices never change anything: the deadline is re-read from Firestore.
+ * @param {string} activityId
+ * @param {{ uid: string } | null} [requester]
+ * @returns {Promise<boolean>} whether a transition happened
+ */
+export async function expireActivity(activityId, requester = null) {
+  requireThat(
+    typeof activityId === 'string' && idPattern.test(activityId),
+    'Actividad inválida.',
+    'invalid-argument',
+  )
+  const db = getDb()
   const ref = db.doc(`activities/${activityId}`)
-  return db.runTransaction(async (tx) => {
+  return await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref)
+    if (requester) {
+      requireThat(snap.exists, 'La actividad no existe.', 'not-found')
+      const [participant, profile] = await Promise.all([
+        tx.get(ref.collection('participants').doc(requester.uid)),
+        tx.get(db.doc(`users/${requester.uid}`)),
+      ])
+      requireThat(
+        participant.exists || (isAdminProfile(profile) && snap.data().ownerUid === requester.uid),
+        'No puedes solicitar el vencimiento de esta actividad.',
+        'permission-denied',
+      )
+    }
     if (!snap.exists) return false
     const activity = snap.data()
     const now = Timestamp.now().toMillis()
@@ -66,16 +102,38 @@ export async function expireActivity(activityId) {
     return true
   })
 }
-export async function expireDue() {
-  const due = await getFirestore()
-    .collection('activities')
-    .where('nextDeadline', '>', 0)
-    .where('nextDeadline', '<=', Timestamp.now().toMillis())
-    .limit(200)
-    .get()
-  await Promise.all(due.docs.map((doc) => expireActivity(doc.id)))
-  return due.size
+const PAGE = 200
+const PARALLEL = 20
+// Recovery used by the cron. Due activities are processed in pages under a fixed budget per run,
+// so a burst never becomes an unbounded loop; the next run continues with whatever is still due.
+export async function expireDue({ maxPages = 5 } = {}) {
+  const db = getDb()
+  let processed = 0
+  for (let page = 0; page < maxPages; page++) {
+    const due = await db
+      .collection('activities')
+      .where('nextDeadline', '>', 0)
+      .where('nextDeadline', '<=', Timestamp.now().toMillis())
+      .limit(PAGE)
+      .get()
+    for (let i = 0; i < due.docs.length; i += PARALLEL) {
+      const results = await Promise.allSettled(
+        due.docs.slice(i, i + PARALLEL).map((doc) => expireActivity(doc.id)),
+      )
+      for (const result of results)
+        if (result.status === 'rejected') console.error('expireDue', result.reason?.message)
+    }
+    processed += due.size
+    if (due.size < PAGE) break
+  }
+  return processed
 }
+/**
+ * Runs one idempotent game operation for a verified identity.
+ * @param {{ uid: string, token: Record<string, any> }} auth
+ * @param {Record<string, any>} input
+ * @returns {Promise<Record<string, any>>}
+ */
 export async function executeOperation(auth, input) {
   requireThat(auth?.uid, 'Inicia sesión para continuar.', 'unauthenticated')
   requireThat(input && typeof input === 'object', 'Solicitud inválida.', 'invalid-argument')
@@ -85,7 +143,7 @@ export async function executeOperation(auth, input) {
     'Falta un identificador válido de solicitud.',
     'invalid-argument',
   )
-  const db = getFirestore()
+  const db = getDb()
   const receiptRef = db.doc(`users/${auth.uid}/requests/${requestId}`)
   const creationId = createHash('sha256')
     .update(`${auth.uid}:${requestId}`)
@@ -94,7 +152,13 @@ export async function executeOperation(auth, input) {
   const generatedCode = randomBytes(5).toString('hex').toUpperCase()
   // Bind an idempotency key to its payload. Reusing it for a different action fails.
   const fingerprint = createHash('sha256').update(JSON.stringify(input)).digest('hex')
-  return db.runTransaction(async (tx) => {
+  const administrative = ADMIN_ACTIONS.includes(action)
+  return await db.runTransaction(async (tx) => {
+    // The role is read inside the transaction and before any stored receipt, so a revoked
+    // administrator cannot replay an earlier administrative request.
+    const profile = await tx.get(db.doc(`users/${auth.uid}`))
+    const admin = isAdminProfile(profile)
+    if (administrative) requireThat(admin, 'Se requiere el rol administrador.', 'permission-denied')
     const receipt = await tx.get(receiptRef)
     if (receipt.exists) {
       requireThat(
@@ -110,11 +174,6 @@ export async function executeOperation(auth, input) {
       return result
     }
     if (action === 'create') {
-      requireThat(
-        auth.token.admin === true,
-        'Se requiere el rol administrador.',
-        'permission-denied',
-      )
       const config = validateConfig(input.config || {})
       const codeRef = db.doc(`joinCodes/${generatedCode}`)
       requireThat(
@@ -165,17 +224,9 @@ export async function executeOperation(auth, input) {
     const a = snapshot.data()
     const participantRef = ref.collection('participants').doc(auth.uid)
     const participant = await tx.get(participantRef)
-    const ownerActions = [
-      'updateConfig',
-      'registration',
-      'decorateStart',
-      'playStart',
-      'cancel',
-      'skip',
-    ]
-    if (ownerActions.includes(action))
+    if (administrative)
       requireThat(
-        auth.token.admin === true && a.ownerUid === auth.uid,
+        admin && a.ownerUid === auth.uid,
         'No puedes gestionar esta actividad.',
         'permission-denied',
       )
@@ -186,26 +237,32 @@ export async function executeOperation(auth, input) {
         'Las inscripciones están cerradas.',
       )
       requireThat(a.participantCount < 100, 'La actividad alcanzó el límite de 100 participantes.')
-      const profile = {
+      const person = {
         uid: auth.uid,
         displayName: String(auth.token.name || 'Participante').slice(0, 80),
         photoURL: safePhoto(auth.token.picture),
         joinedAt: now,
         decorationCount: 0,
       }
-      tx.create(participantRef, profile)
+      tx.create(participantRef, person)
       tx.create(db.doc(`publicActivities/${activityId}/participants/${auth.uid}`), {
-        uid: profile.uid,
-        displayName: profile.displayName,
-        photoURL: profile.photoURL,
+        uid: person.uid,
+        displayName: person.displayName,
+        photoURL: person.photoURL,
         joinedAt: now,
       })
+      // Never touches an existing role; a brand-new profile starts without privileges.
       tx.set(
         db.doc(`users/${auth.uid}`),
-        { displayName: profile.displayName, email: auth.token.email || null, updatedAt: now },
+        {
+          displayName: person.displayName,
+          email: auth.token.email || null,
+          updatedAt: now,
+          ...(profile.exists ? {} : { isAdmin: false }),
+        },
         { merge: true },
       )
-      a.roster[auth.uid] = { displayName: profile.displayName, photoURL: profile.photoURL }
+      a.roster[auth.uid] = { displayName: person.displayName, photoURL: person.photoURL }
       a.participantCount++
     } else if (action === 'updateConfig') {
       requireThat(a.state === 'LOBBY', 'La configuración solo se edita en el lobby.')

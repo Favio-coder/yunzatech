@@ -2,18 +2,42 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function adminOwner() {
-      return signedIn() && request.auth.token.admin == true && resource.data.ownerUid == request.auth.uid;
+    function own(uid) { return signedIn() && request.auth.uid == uid; }
+    // The only administrator authority: the boolean isAdmin in the caller's own profile.
+    // Custom Claims and the old `admins` collection grant nothing.
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
-    // All mutations pass through transactional, validated callable functions.
+    function adminOwner() { return isAdmin() && resource.data.ownerUid == request.auth.uid; }
+    // All mutations pass through the transactional, validated backend API.
     match /activities/{activityId} {
       allow read: if adminOwner();
       allow write: if false;
       match /{document=**} { allow read, write: if false; }
     }
     match /users/{uid} {
-      allow get: if signedIn() && request.auth.uid == uid;
-      allow list, write: if false;
+      allow get: if own(uid);
+      allow list, delete: if false;
+      // First login: the profile is created by its owner, always without privileges.
+      allow create: if own(uid)
+        && request.resource.data.keys().hasOnly(['displayName', 'email', 'isAdmin', 'createdAt'])
+        && request.resource.data.keys().hasAll(['displayName', 'isAdmin', 'createdAt'])
+        && request.resource.data.isAdmin == false
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 1
+        && request.resource.data.displayName.size() <= 80
+        && (!('email' in request.resource.data)
+          || request.resource.data.email == null
+          || ('email' in request.auth.token
+            && request.resource.data.email == request.auth.token.email))
+        && request.resource.data.createdAt == request.time;
+      // Profiles created before the role existed: initialise isAdmin to false and nothing else.
+      allow update: if own(uid)
+        && !('isAdmin' in resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isAdmin'])
+        && request.resource.data.isAdmin == false;
       match /requests/{requestId} { allow read, write: if false; }
     }
     match /publicActivities/{activityId} {

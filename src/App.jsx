@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
-import { configured, login, logout, usingEmulators } from './services/firebase'
+import { apiConfigured, configured, login, logout, usingEmulators } from './services/firebase'
 import { Avatar, Icon, Notice } from './components/ui'
 import HomePage from './pages/HomePage'
 import AdminPage from './pages/AdminPage'
@@ -52,14 +52,25 @@ function Guard({ children, admin = false }) {
         <LoginButton />
       </div>
     )
+  if (session.error)
+    return (
+      <div className="empty-state">
+        <Icon name="leaf" size={40} />
+        <h2>No pudimos verificar tu perfil</h2>
+        <p>{session.error}</p>
+        <button className="button" onClick={session.retry}>
+          Reintentar
+        </button>
+      </div>
+    )
   if (admin && !session.admin)
     return (
       <div className="empty-state">
         <Icon name="leaf" size={40} />
         <h2>Tu cuenta es de participante</h2>
         <p>
-          El rol administrador se asigna de forma segura con el script de Firebase. Revisa el README
-          del proyecto.
+          El rol administrador se habilita desde Firebase Console, marcando el campo isAdmin de tu
+          perfil. Si te lo acaban de activar, esta pantalla se actualizará sola.
         </p>
         <Link className="button" to="/join">
           Unirme a una yunza
@@ -161,11 +172,17 @@ export default function App() {
           </div>
         </header>
         <main className="page-content">
-          <Notice error>{error || logoutError}</Notice>
+          <Notice error>{(!user && error) || logoutError}</Notice>
           {!configured && (
             <Notice>
               Firebase aún no está configurado. Copia .env.example a .env y completa los datos de tu
               aplicación. La ilustración del inicio es una vista visual; no simula una partida.
+            </Notice>
+          )}
+          {configured && !apiConfigured && (
+            <Notice>
+              Falta VITE_API_BASE_URL: el servidor de la yunza no está configurado y las acciones no
+              funcionarán hasta definirlo.
             </Notice>
           )}
           <Routes>

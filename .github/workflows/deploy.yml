@@ -1,8 +1,9 @@
-name: Publicar Vite en GitHub Pages
+name: Verificar y publicar
 
 on:
   push:
     branches: ["main"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -15,7 +16,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Lint, pruebas y emuladores
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v7
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Configurar Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Configurar Java para el emulador de Firestore
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Lint y formato
+        run: |
+          npm run lint
+          npm run format:check
+
+      - name: Comprobar y probar el backend Deno
+        run: |
+          npm run check:backend
+          npm test
+
+      - name: Pruebas de integración con emuladores y backend Deno
+        run: npm run test:emulators
+
   deploy:
+    name: Publicar frontend en GitHub Pages
+    needs: verify
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
     environment:
@@ -37,11 +81,14 @@ jobs:
 
       - name: Compilar proyecto
         env:
+          # Con dominio propio en la raíz del sitio cambia este valor a "/".
           VITE_BASE_PATH: /
           VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
           VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+          # URL pública del backend en Deno Deploy, sin barra final.
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: npm run build
 
       - name: Rutas SPA en GitHub Pages

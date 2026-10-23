@@ -1,13 +1,6 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  hitOutcome,
-  inTree,
-  nextTurn,
-  publicActivity,
-  shuffle,
-  validateConfig,
-} from '../src/domain.js'
+import { hitOutcome, inTree, nextTurn, publicActivity, shuffle, validateConfig } from '../domain.js'
+const test = (name, fn) => Deno.test(name, fn)
 const config = {
   name: 'Mi yunza',
   description: '',

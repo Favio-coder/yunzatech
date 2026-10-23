@@ -1,5 +1,4 @@
 {
-  "functions": [{ "source": "functions", "codebase": "default", "runtime": "nodejs22" }],
   "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
   "hosting": {
     "public": "dist",
@@ -8,7 +7,6 @@
   },
   "emulators": {
     "auth": { "host": "127.0.0.1", "port": 9099 },
-    "functions": { "host": "127.0.0.1", "port": 5001 },
     "firestore": { "host": "127.0.0.1", "port": 8080 },
     "ui": { "enabled": true, "port": 4000 },
     "singleProjectMode": true
