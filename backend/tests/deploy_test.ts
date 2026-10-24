@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { previewResponse, unconfiguredPreview } from '../deploy.ts'
+import { previewResponse, unconfiguredPreview } from '../preview.ts'
 
 Deno.test('only unconfigured Deploy preview timelines enter the inert preview mode', () => {
   const env = (extra: Record<string, string> = {}) => {

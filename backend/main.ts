@@ -1,3 +1,4 @@
+import './crons.ts'
 import { authenticate } from './auth.ts'
 import { identityStatus, initFirebase, loadSettings, type Settings } from './firebase.ts'
 import { corsHeaders, errorResponse, failure, HttpError, json, readJsonObject } from './http.ts'
@@ -5,13 +6,6 @@ import { executeOperation, expireActivity, expireDue, idPattern } from './servic
 
 const settings = loadSettings()
 initFirebase(settings)
-
-// Recovery of missed deadlines without browsers. Registered at the top level, as Deno Deploy
-// requires. Minute granularity: connected browsers request the exact deadline via /expire.
-Deno.cron('recover-deadlines', '* * * * *', { backoffSchedule: [5000, 20000] }, async () => {
-  const processed = await expireDue()
-  if (processed) console.log(`cron recover-deadlines: ${processed} actividades revisadas`)
-})
 
 // Local-only replacement for the cloud cron so emulator sessions advance turns every second.
 if (settings.localClockMs > 0)
@@ -70,7 +64,7 @@ export async function handle(request: Request, config: Settings = settings): Pro
   }
 }
 
-export function startServer() {
+export function startServer(): Deno.HttpServer<Deno.NetAddr> {
   return Deno.serve({ port: settings.port }, (request) => handle(request))
 }
 
