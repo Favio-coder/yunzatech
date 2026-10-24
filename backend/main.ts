@@ -70,4 +70,8 @@ export async function handle(request: Request, config: Settings = settings): Pro
   }
 }
 
-if (import.meta.main) Deno.serve({ port: settings.port }, (request) => handle(request))
+export function startServer() {
+  return Deno.serve({ port: settings.port }, (request) => handle(request))
+}
+
+if (import.meta.main) startServer()

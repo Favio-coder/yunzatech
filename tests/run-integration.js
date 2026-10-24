@@ -9,7 +9,7 @@ const port = Number(process.env.API_TEST_PORT || 8787)
 const apiBaseUrl = `http://127.0.0.1:${port}`
 const backend = spawn(
   denoBinary(),
-  ['run', '--allow-net', '--allow-env', '--allow-read', '--allow-sys', 'main.ts'],
+  ['run', '--allow-net', '--allow-env', '--allow-read', '--allow-sys', 'deploy.ts'],
   {
     cwd: resolve('backend'),
     env: {

@@ -21,5 +21,8 @@ export function previewResponse(request: Request): Response {
 
 if (import.meta.main) {
   if (unconfiguredPreview(Deno.env.get)) Deno.serve(previewResponse)
-  else await import('./main.ts')
+  else {
+    const { startServer } = await import('./main.ts')
+    startServer()
+  }
 }
