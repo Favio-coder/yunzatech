@@ -4,7 +4,7 @@ import { Icon } from './ui'
 export default function ActivityForm({ onSave, pending, initial = defaults, editing = false }) {
   const [form, setForm] = useState(initial)
   const [customMinutes, setCustomMinutes] = useState(
-    ![5, 8, 10].includes(initial.decorationMinutes),
+    ![1, 5, 8, 10].includes(initial.decorationMinutes),
   )
   const update = (key, value) => setForm((previous) => ({ ...previous, [key]: value }))
   return (
@@ -46,6 +46,7 @@ export default function ActivityForm({ onSave, pending, initial = defaults, edit
             if (value !== 'custom') update('decorationMinutes', Number(value))
           }}
         >
+          <option value="1">1 minuto</option>
           <option value="5">5 minutos</option>
           <option value="8">8 minutos</option>
           <option value="10">10 minutos</option>
@@ -60,9 +61,11 @@ export default function ActivityForm({ onSave, pending, initial = defaults, edit
             required
             min={1}
             max={60}
+            step={1}
             value={form.decorationMinutes}
             onChange={(event) => update('decorationMinutes', Number(event.target.value))}
           />
+          <small>Elige entre 1 y 60 minutos completos.</small>
         </label>
       )}
       <div className="form-grid">

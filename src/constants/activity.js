@@ -18,7 +18,7 @@ export const shortPhases = {
 export const defaults = {
   name: '',
   description: '',
-  decorationMinutes: 8,
+  decorationMinutes: 1,
   initialHealth: 500,
   minDamage: 10,
   maxDamage: 35,
