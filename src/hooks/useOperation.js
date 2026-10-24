@@ -1,13 +1,22 @@
 import { useRef, useState } from 'react'
 import { operate } from '../services/firebase'
+import { useAuth } from './useAuth'
 
 export function useOperation() {
+  const { user } = useAuth()
+  const uid = user?.uid
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const locked = useRef(false)
   const retry = useRef(null)
+  const owner = useRef(uid)
   const run = async (payload) => {
     if (locked.current) return null
+    // A request id remembered for another account is never reused.
+    if (owner.current !== uid) {
+      owner.current = uid
+      retry.current = null
+    }
     locked.current = true
     setPending(true)
     setError('')

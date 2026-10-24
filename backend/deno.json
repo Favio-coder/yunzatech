@@ -1,0 +1,37 @@
+{
+  "name": "yunza-tech-backend",
+  "version": "1.0.0",
+  "exports": "./main.ts",
+  "unstable": ["cron"],
+  "tasks": {
+    "dev": "deno run --env-file=.env.emulator --watch --allow-net --allow-env --allow-read --allow-sys main.ts",
+    "start": "deno run --allow-net --allow-env --allow-read --allow-sys main.ts",
+    "check": "deno check main.ts tests/ && deno lint",
+    "test": "deno test --allow-net --allow-env --allow-read --allow-sys tests/"
+  },
+  "imports": {
+    "@google-cloud/firestore": "npm:@google-cloud/firestore@9.3.1",
+    "google-auth-library": "npm:google-auth-library@11.3.1",
+    "firebase-admin/app": "npm:firebase-admin@14.5.0/app",
+    "firebase-admin/auth": "npm:firebase-admin@14.5.0/auth",
+    "firebase-admin/firestore": "npm:firebase-admin@14.5.0/firestore"
+  },
+  "lint": {
+    "rules": {
+      "exclude": ["no-explicit-any"]
+    }
+  },
+  "fmt": {
+    "semiColons": false,
+    "singleQuote": true,
+    "lineWidth": 100
+  },
+  "deploy": {
+    "org": "favio-coder",
+    "app": "yunzatech",
+    "runtime": {
+      "type": "dynamic",
+      "entrypoint": "./main.ts"
+    }
+  }
+}

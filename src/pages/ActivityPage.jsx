@@ -6,6 +6,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useLive } from '../hooks/useLive'
 import { useOperation } from '../hooks/useOperation'
+import { useExpiration } from '../hooks/useExpiration'
 import { useServerTime } from '../hooks/useServerTime'
 import TreeScene from '../components/TreeScene'
 import ActivityCountdown from '../components/ActivityCountdown'
@@ -46,6 +47,14 @@ export default function ActivityPage({ management = false, display = false, winn
   const ownDecorations = decorations.filter((item) => item.uid === user?.uid).length
   const busy = operation.pending || !online
   const action = (name, extra = {}) => operation.run({ action: name, activityId, ...extra })
+  // Connected participants and the organiser ask the server to check deadlines as they pass.
+  useExpiration({
+    activityId,
+    activity,
+    now,
+    synced,
+    enabled: !display && online && Boolean(user) && (member || management),
+  })
 
   if (activityLive.loading || (management && privateLive.loading))
     return <div className="empty-state">Preparando el encuentro…</div>

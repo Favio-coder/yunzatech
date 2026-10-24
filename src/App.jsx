@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
-import { configured, login, logout, usingEmulators } from './services/firebase'
+import { apiConfigured, configured, login, logout, usingEmulators } from './services/firebase'
 import { Avatar, Icon, Notice } from './components/ui'
 import HomePage from './pages/HomePage'
 import AdminPage from './pages/AdminPage'
@@ -52,12 +52,13 @@ function Guard({ children, admin = false }) {
         <LoginButton />
       </div>
     )
-  if (admin && session.roleLoading) return <div className="empty-state">Validando permisos…</div>
-  if (admin && session.roleError)
+  if (session.error)
     return (
       <div className="empty-state">
-        <Notice error>No se pudieron validar tus permisos: {session.roleError}</Notice>
-        <button className="button" onClick={session.retryRole}>
+        <Icon name="leaf" size={40} />
+        <h2>No pudimos verificar tu perfil</h2>
+        <p>{session.error}</p>
+        <button className="button" onClick={session.retry}>
           Reintentar
         </button>
       </div>
@@ -68,8 +69,8 @@ function Guard({ children, admin = false }) {
         <Icon name="leaf" size={40} />
         <h2>Tu cuenta es de participante</h2>
         <p>
-          Tu perfil se crea automáticamente. El rol administrador se habilita con isAdmin en
-          Firebase Console. Revisa el README del proyecto.
+          El rol administrador se habilita desde Firebase Console, marcando el campo isAdmin de tu
+          perfil. Si te lo acaban de activar, esta pantalla se actualizará sola.
         </p>
         <Link className="button" to="/join">
           Unirme a una yunza
@@ -79,7 +80,7 @@ function Guard({ children, admin = false }) {
   return children
 }
 export default function App() {
-  const { user, admin, error, roleError, retryRole } = useAuth()
+  const { user, admin, error } = useAuth()
   const { pathname } = useLocation()
   const [logoutError, setLogoutError] = useState('')
   const display = pathname.startsWith('/display/')
@@ -104,12 +105,10 @@ export default function App() {
               <Icon name="users" />
               Unirme a una yunza
             </NavLink>
-            {admin && (
-              <NavLink to="/admin">
-                <Icon name="grid" />
-                Mis actividades<span className="nav-admin">ADMIN</span>
-              </NavLink>
-            )}
+            <NavLink to="/admin">
+              <Icon name="grid" />
+              Mis actividades{admin && <span className="nav-admin">ADMIN</span>}
+            </NavLink>
           </nav>
           <div className="sidebar-bottom">
             <div className="tradition-card">
@@ -173,19 +172,17 @@ export default function App() {
           </div>
         </header>
         <main className="page-content">
-          <Notice error>{error || logoutError}</Notice>
-          {roleError && !pathname.startsWith('/admin') && (
-            <Notice error>
-              {roleError}{' '}
-              <button className="button" onClick={retryRole}>
-                Reintentar
-              </button>
-            </Notice>
-          )}
+          <Notice error>{(!user && error) || logoutError}</Notice>
           {!configured && (
             <Notice>
               Firebase aún no está configurado. Copia .env.example a .env y completa los datos de tu
               aplicación. La ilustración del inicio es una vista visual; no simula una partida.
+            </Notice>
+          )}
+          {configured && !apiConfigured && (
+            <Notice>
+              Falta VITE_API_BASE_URL: el servidor de la yunza no está configurado y las acciones no
+              funcionarán hasta definirlo.
             </Notice>
           )}
           <Routes>

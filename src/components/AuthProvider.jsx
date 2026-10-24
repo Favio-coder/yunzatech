@@ -1,119 +1,75 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { onAuthStateChanged } from 'firebase/auth'
-import { onSnapshot } from 'firebase/firestore'
+import { doc, onSnapshot } from 'firebase/firestore'
 import { auth, db } from '../services/firebase'
 import { ensureUserProfile } from '../services/userProfile'
 import { AuthContext } from '../hooks/useAuth'
 
-function roleErrorMessage(error) {
-  if (error.code === 'permission-denied')
-    return 'Firebase denegó el acceso al perfil. Despliega las reglas actualizadas de firestore.rules en el mismo proyecto configurado en la aplicación.'
-  return error.message
-}
-
+const signedOut = { user: null, admin: false, loading: false, error: '' }
 export default function AuthProvider({ children }) {
-  const [session, setSession] = useState({
-    user: null,
-    admin: false,
-    authLoading: Boolean(auth),
-    roleLoading: false,
-    roleError: '',
-    error: '',
-  })
+  const [session, setSession] = useState({ ...signedOut, loading: Boolean(auth) })
   const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => setAttempt((count) => count + 1), [])
   useEffect(() => {
     if (!auth) return
-    let stopRole = () => {}
     let generation = 0
-    const stopAuth = onAuthStateChanged(
+    let unsubscribeProfile = null
+    const stopProfile = () => {
+      unsubscribeProfile?.()
+      unsubscribeProfile = null
+    }
+    const unsubscribeAuth = onAuthStateChanged(
       auth,
       async (user) => {
-        stopRole()
+        // Every identity change discards listeners, privileges and pending results of the
+        // previous one, so a late response can never publish a stale role.
         const current = ++generation
-        setSession({
-          user,
-          admin: false,
-          authLoading: false,
-          roleLoading: Boolean(user),
-          roleError: '',
-          error: '',
-        })
-        if (!user) return
-        try {
-          const ref = await ensureUserProfile(db, user)
-          if (current !== generation || auth.currentUser?.uid !== user.uid) return
-          stopRole = onSnapshot(
-            ref,
-            { includeMetadataChanges: true },
-            (snapshot) => {
-              if (current !== generation || auth.currentUser?.uid !== user.uid) return
-              // Cached grants cannot establish authority while offline or before server validation.
-              setSession({
-                user,
-                admin: !snapshot.metadata.fromCache && snapshot.data()?.isAdmin === true,
-                authLoading: false,
-                roleLoading: snapshot.metadata.fromCache,
-                roleError: '',
-                error: '',
-              })
-            },
-            (error) => {
-              if (current !== generation || auth.currentUser?.uid !== user.uid) return
-              setSession({
-                user,
-                admin: false,
-                authLoading: false,
-                roleLoading: false,
-                roleError: roleErrorMessage(error),
-                error: '',
-              })
-            },
-          )
-        } catch (error) {
-          if (current !== generation || auth.currentUser?.uid !== user.uid) return
-          setSession({
-            user,
-            admin: false,
-            authLoading: false,
-            roleLoading: false,
-            roleError: roleErrorMessage(error),
-            error: '',
-          })
+        stopProfile()
+        if (!user) {
+          setSession(signedOut)
+          return
         }
+        setSession({ user, admin: false, loading: true, error: '' })
+        try {
+          await ensureUserProfile(user)
+        } catch (error) {
+          if (current === generation)
+            setSession({
+              user,
+              admin: false,
+              loading: false,
+              error: `No pudimos preparar tu perfil. ${error.message || ''}`.trim(),
+            })
+          return
+        }
+        if (current !== generation) return
+        // The role lives in users/{uid}.isAdmin and is edited from Firebase Console; this
+        // listener applies grants and revocations while the session stays open.
+        unsubscribeProfile = onSnapshot(
+          doc(db, 'users', user.uid),
+          { includeMetadataChanges: true },
+          (snapshot) => {
+            if (current !== generation) return
+            setSession({
+              user,
+              admin: !snapshot.metadata.fromCache && snapshot.data()?.isAdmin === true,
+              loading: snapshot.metadata.fromCache,
+              error: '',
+            })
+          },
+          (error) => {
+            if (current === generation)
+              setSession({ user, admin: false, loading: false, error: error.message })
+          },
+        )
       },
-      (error) => {
-        ++generation
-        stopRole()
-        setSession({
-          user: null,
-          admin: false,
-          authLoading: false,
-          roleLoading: false,
-          roleError: '',
-          error: error.message,
-        })
-      },
+      (error) => setSession({ ...signedOut, error: error.message }),
     )
     return () => {
-      ++generation
-      stopRole()
-      stopAuth()
+      generation++
+      stopProfile()
+      unsubscribeAuth()
     }
   }, [attempt])
-  const retryRole = () => {
-    setSession((previous) => ({
-      ...previous,
-      admin: false,
-      roleLoading: Boolean(previous.user),
-      roleError: '',
-    }))
-    setAttempt((value) => value + 1)
-  }
-  return (
-    <AuthContext.Provider
-      value={{ ...session, isAdmin: session.admin, loading: session.authLoading, retryRole }}
-    >
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={{ ...session, retry }}>{children}</AuthContext.Provider>
 }

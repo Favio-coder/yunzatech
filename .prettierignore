@@ -1,7 +1,6 @@
 node_modules
-functions/node_modules
 .tools
 .firebase
 dist
 package-lock.json
-functions/package-lock.json
+backend/deno.lock
