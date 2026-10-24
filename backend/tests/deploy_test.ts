@@ -9,7 +9,8 @@ Deno.test('only unconfigured Deploy preview timelines enter the inert preview mo
   assert.equal(unconfiguredPreview(env()), true)
   assert.equal(unconfiguredPreview(env({ DENO_TIMELINE: 'git-branch/main' })), true)
   assert.equal(unconfiguredPreview(env({ DENO_TIMELINE: 'production' })), false)
-  assert.equal(unconfiguredPreview(env({ DENO_TIMELINE: '' })), false)
+  // Deploy's warmup can start before a timeline name has been assigned.
+  assert.equal(unconfiguredPreview(env({ DENO_TIMELINE: '' })), true)
   assert.equal(unconfiguredPreview(env({ DENO_DEPLOY: 'false' })), false)
   assert.equal(unconfiguredPreview(env({ FIREBASE_PROJECT_ID: 'preview-project' })), false)
 })

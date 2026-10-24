@@ -4,7 +4,7 @@ export function unconfiguredPreview(get: (name: string) => string | undefined): 
   const timeline = get('DENO_TIMELINE') || ''
   return (
     get('DENO_DEPLOY') === 'true' &&
-    (timeline.startsWith('preview/') || timeline.startsWith('git-branch/')) &&
+    timeline !== 'production' &&
     !get('FIREBASE_PROJECT_ID')?.trim()
   )
 }
